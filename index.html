@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STM32 Pinout Explorer & Merger</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Alpine.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans" x-data="pinExplorer()">
+    
+    <header class="bg-slate-800 border-b border-slate-700 sticky top-0 z-50 shadow-md">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
+            <div>
+                <h1 class="text-xl font-bold flex items-center gap-2">
+                    <span class="text-blue-400">⚡ STM32 Pinout Explorer</span>
+                </h1>
+                <p class="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
+                    <span x-text="mcuName ? `MCU: ${mcuName} (${packageType})` : 'Loading data from GitHub...'"></span>
+                    <span class="text-slate-600">|</span>
+                    <a href="https://github.com/STMicroelectronics/STM32_open_pin_data/tree/master" target="_blank" class="text-blue-400 hover:underline flex items-center gap-1">
+                        🔗 ST GitHub Repository
+                    </a>
+                </p>
+            </div>
+            
+            <div class="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                <select x-model="selectedMcuUrl" @change="loadFromGithub(selectedMcuUrl)" class="bg-slate-900 border border-slate-700 text-sm rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500">
+                    <option value="">-- Select Microcontroller --</option>
+                    <template x-for="mcu in availableMcus" :key="mcu.url">
+                        <option :value="mcu.url" x-text="mcu.name"></option>
+                    </template>
+                </select>
+                
+                <label class="cursor-pointer bg-slate-700 hover:bg-slate-600 text-white text-sm px-3 py-2 rounded-lg border border-slate-600 transition flex items-center gap-1">
+                    📁 Local XML
+                    <input type="file" accept=".xml" class="hidden" @change="loadLocalFile($event)">
+                </label>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        
+        <div x-show="loading" class="bg-blue-900/40 border border-blue-700 p-4 rounded-xl text-center text-blue-200 text-sm animate-pulse">
+            ⏳ Loading and parsing XML from GitHub repository...
+        </div>
+
+        <!-- Filters & Search -->
+        <div class="bg-slate-800 p-4 rounded-xl border border-slate-700 grid grid-cols-1 md:grid-cols-3 gap-4 shadow">
+            <div>
+                <label class="block text-xs font-semibold text-slate-400 mb-1">Search by Pin / Position (comma/space separated):</label>
+                <input type="text" x-model="searchQuery" placeholder="e.g. PE4, PE5, 34..." 
+                    class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-slate-400 mb-1">Filter by Signals (comma / '|'):</label>
+                <input type="text" x-model="signalFilter" placeholder="e.g. fmc, ltdc, sai1, sai4..." 
+                    class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-slate-400 mb-1">Quick Routing Filters:</label>
+                <div class="flex flex-wrap gap-1.5 pt-1">
+                    <button @click="signalFilter = 'FMC'" class="text-xs bg-slate-700 hover:bg-blue-600 px-2.5 py-1 rounded transition">RAM (FMC)</button>
+                    <button @click="signalFilter = 'LTDC'" class="text-xs bg-slate-700 hover:bg-blue-600 px-2.5 py-1 rounded transition">Display (LTDC)</button>
+                    <button @click="signalFilter = 'SAI'" class="text-xs bg-slate-700 hover:bg-blue-600 px-2.5 py-1 rounded transition">Audio (SAI)</button>
+                    <button @click="signalFilter = ''" class="text-xs bg-red-900/40 hover:bg-red-900 px-2 py-1 rounded text-red-300 transition">Reset</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- View Settings (Checkboxes) -->
+        <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="showAllPins" x-model="showAllPinsEvenWithoutMatch" class="w-4 h-4 accent-blue-600 rounded bg-slate-900 border-slate-700 cursor-pointer">
+                <label for="showAllPins" class="cursor-pointer text-slate-300 text-xs font-medium">
+                    Show pin even if function doesn't match
+                </label>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="hideUnmatched" x-model="hideUnmatchedSignals" class="w-4 h-4 accent-blue-600 rounded bg-slate-900 border-slate-700 cursor-pointer">
+                <label for="hideUnmatched" class="cursor-pointer text-slate-300 text-xs font-medium">
+                    Keep only filtered functions in column
+                </label>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="groupColumns" x-model="splitIntoColumns" class="w-4 h-4 accent-blue-600 rounded bg-slate-900 border-slate-700 cursor-pointer">
+                <label for="groupColumns" class="cursor-pointer text-slate-300 text-xs font-medium">
+                    Split functions into separate group columns
+                </label>
+            </div>
+        </div>
+
+        <!-- Stats & Copy Button -->
+        <div class="flex flex-col sm:flex-row justify-between items-center gap-3 px-1">
+            <div class="text-xs text-slate-400">
+                Pins found: <span class="font-bold text-blue-400 ml-1" x-text="filteredPins.length"></span>
+            </div>
+            <button @click="copyTableToClipboard()" class="bg-emerald-700 hover:bg-emerald-600 text-white text-xs px-4 py-2 rounded-lg shadow transition flex items-center gap-1.5 font-medium">
+                📋 Copy Table (for Excel / Sheets)
+            </button>
+        </div>
+
+        <!-- Pin Table -->
+        <div class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow">
+            <div class="overflow-x-auto">
+                <table id="pinTable" class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-900/80 text-slate-400 text-xs uppercase border-b border-slate-700">
+                            <th class="p-3 w-20">Position</th>
+                            <th class="p-3 w-20">Pin</th>
+                            <th class="p-3 w-28">Type</th>
+
+                            <template x-if="splitIntoColumns">
+                                <template x-for="groupName in availableGroups" :key="groupName">
+                                    <th class="p-3 font-mono text-blue-400" x-text="groupName"></th>
+                                </template>
+                            </template>
+                            <template x-if="!splitIntoColumns">
+                                <th class="p-3">Alternate Functions (Signals) / GPIO Modes</th>
+                            </template>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-700 text-sm">
+                        <template x-for="pin in filteredPins" :key="pin.name + pin.position">
+                            <tr class="hover:bg-slate-750 transition">
+                                <td class="p-3 font-mono text-slate-400 text-xs" x-text="pin.position"></td>
+                                <td class="p-3 font-mono font-bold text-blue-400" x-text="pin.name"></td>
+                                <td class="p-3">
+                                    <span class="px-2 py-0.5 rounded text-xs font-semibold"
+                                        :class="{
+                                            'bg-emerald-900/50 text-emerald-300 border border-emerald-700': pin.type === 'I/O',
+                                            'bg-amber-900/50 text-amber-300 border border-amber-700': pin.type === 'Power',
+                                            'bg-purple-900/50 text-purple-300 border border-purple-700': pin.type === 'Reset'
+                                        }"
+                                        x-text="pin.type">
+                                    </span>
+                                </td>
+                                
+                                <template x-if="splitIntoColumns">
+                                    <template x-for="groupName in availableGroups" :key="groupName">
+                                        <td class="p-3">
+                                            <div class="flex flex-wrap gap-1.5">
+                                                <template x-for="sig in getSignalsForGroup(pin, groupName)">
+                                                    <span class="px-1.5 py-0.5 rounded text-xs font-mono bg-slate-900 text-slate-300 border border-slate-700"
+                                                        :class="highlightSignal(sig) ? 'bg-blue-600 text-white font-bold ring-1 ring-blue-400' : ''"
+                                                        x-text="sig + ' '">
+                                                    </span>
+                                                </template>
+                                            </div>
+                                        </td>
+                                    </template>
+                                </template>
+
+                                <template x-if="!splitIntoColumns">
+                                    <td class="p-3">
+                                        <div class="flex flex-wrap gap-1.5">
+                                            <template x-for="sig in getDisplaySignals(pin)">
+                                                <span class="px-2 py-0.5 rounded text-xs font-mono"
+                                                    :class="highlightSignal(sig) ? 'bg-blue-600 text-white font-bold ring-2 ring-blue-400' : 'bg-slate-900 text-slate-300 border border-slate-700'"
+                                                    x-text="sig + ' '">
+                                                </span>
+                                            </template>
+                                        </div>
+                                    </td>
+                                </template>
+
+                            </tr>
+                        </template>
+                        <template x-if="filteredPins.length === 0 && !loading">
+                            <tr>
+                                <td colspan="4" class="p-8 text-center text-slate-500">
+                                    No pins found matching the criteria.
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        function pinExplorer() {
+            return {
+                mcuName: '',
+                packageType: '',
+                pins: [],
+                searchQuery: '',
+                signalFilter: '',
+                hideUnmatchedSignals: false,
+                showAllPinsEvenWithoutMatch: false,
+                splitIntoColumns: false,
+                loading: false,
+                selectedMcuUrl: 'https://raw.githubusercontent.com/STMicroelectronics/STM32_open_pin_data/master/mcu/STM32H743ZITx.xml',
+                
+                availableMcus: [
+                    { name: 'STM32H743ZITx (H7 Series)', url: 'https://raw.githubusercontent.com/STMicroelectronics/STM32_open_pin_data/master/mcu/STM32H743ZITx.xml' },
+                    { name: 'STM32F103C8Tx (Bluepill F1)', url: 'https://raw.githubusercontent.com/STMicroelectronics/STM32_open_pin_data/master/mcu/STM32F103C8Tx.xml' },
+                    { name: 'STM32F401RETx (F4 Series)', url: 'https://raw.githubusercontent.com/STMicroelectronics/STM32_open_pin_data/master/mcu/STM32F401RETx.xml' },
+                    { name: 'STM32F405RGTx (F4 Series)', url: 'https://raw.githubusercontent.com/STMicroelectronics/STM32_open_pin_data/master/mcu/STM32F405RGTx.xml' }
+                ],
+
+                init() {
+                    const params = new URLSearchParams(window.location.search);
+                    const urlParam = params.get('url');
+                    const mcuParam = params.get('mcu');
+
+                    if (urlParam) {
+                        this.selectedMcuUrl = urlParam;
+                    } else if (mcuParam) {
+                        let cleanMcu = mcuParam.endsWith('.xml') ? mcuParam : mcuParam + '.xml';
+                        this.selectedMcuUrl = `https://raw.githubusercontent.com/STMicroelectronics/STM32_open_pin_data/master/mcu/${cleanMcu}`;
+                    }
+
+                    this.loadFromGithub(this.selectedMcuUrl);
+                },
+
+                async loadFromGithub(url) {
+                    if (!url) return;
+                    this.loading = true;
+                    try {
+                        const response = await fetch(url);
+                        if (!response.ok) throw new Error('Network error while loading from GitHub');
+                        const xmlText = await response.text();
+                        this.parseXmlText(xmlText);
+                    } catch (error) {
+                        alert('Failed to load file from GitHub. Error: ' + error.message);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                loadLocalFile(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        this.parseXmlText(e.target.result);
+                    };
+                    reader.readAsText(file);
+                },
+
+                parseXmlText(xmlString) {
+                    const parser = new DOMParser();
+                    const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+                    
+                    const mcuNode = xmlDoc.querySelector("Mcu");
+                    if (!mcuNode) {
+                        alert("XML parsing error: <Mcu> tag not found");
+                        return;
+                    }
+
+                    this.mcuName = mcuNode.getAttribute("RefName") || "Unknown MCU";
+                    this.packageType = mcuNode.getAttribute("Package") || "";
+
+                    const pinNodes = xmlDoc.querySelectorAll("Pin");
+                    let parsedPins = [];
+
+                    pinNodes.forEach(pin => {
+                        const name = pin.getAttribute("Name");
+                        const position = pin.getAttribute("Position");
+                        const type = pin.getAttribute("Type");
+                        
+                        let signals = [];
+                        pin.querySelectorAll("Signal").forEach(sig => {
+                            let sigName = sig.getAttribute("Name");
+                            let ioModes = sig.getAttribute("IOModes");
+                            if (sigName === "GPIO" && ioModes) {
+                                signals.push(`GPIO`);
+                            } else if (sigName) {
+                                signals.push(sigName);
+                            }
+                        });
+
+                        parsedPins.push({ name, position, type, signals });
+                    });
+
+                    this.pins = parsedPins;
+                },
+
+                parseQueries(input) {
+                    if (!input) return [];
+                    return input.split(/[,|\s]+/).map(q => q.trim().toLowerCase()).filter(q => q.length > 0);
+                },
+
+                highlightSignal(sig) {
+                    const queries = this.parseQueries(this.signalFilter);
+                    if (queries.length === 0) return false;
+                    const lowerSig = sig.toLowerCase();
+                    return queries.some(q => lowerSig.includes(q));
+                },
+
+                getDisplaySignals(pin) {
+                    let sigs = pin.signals;
+                    const queries = this.parseQueries(this.signalFilter);
+                    if (this.hideUnmatchedSignals && queries.length > 0) {
+                        sigs = sigs.filter(sig => {
+                            const lowerSig = sig.toLowerCase();
+                            return queries.some(q => lowerSig.includes(q));
+                        });
+                    }
+                    return sigs;
+                },
+
+                get availableGroups() {
+                    let groups = new Set();
+                    let pinsToAnalyze = this.showAllPinsEvenWithoutMatch ? this.pins : this.filteredPins;
+                    
+                    pinsToAnalyze.forEach(pin => {
+                        let sigs = this.getDisplaySignals(pin);
+                        sigs.forEach(sig => {
+                            const queries = this.parseQueries(this.signalFilter);
+                            if (queries.length > 0 && !this.highlightSignal(sig)) return;
+                            let prefix = sig.includes('_') ? sig.split('_')[0] : 'OTHER';
+                            groups.add(prefix);
+                        });
+                    });
+                    return Array.from(groups).sort();
+                },
+
+                getSignalsForGroup(pin, groupName) {
+                    let sigs = this.getDisplaySignals(pin);
+                    return sigs.filter(sig => {
+                        let prefix = sig.includes('_') ? sig.split('_')[0] : 'OTHER';
+                        return prefix === groupName;
+                    });
+                },
+
+                copyTableToClipboard() {
+                    const table = document.getElementById('pinTable');
+                    let text = '';
+                    for (let row of table.rows) {
+                        let rowData = [];
+                        for (let cell of row.cells) {
+                            rowData.push(cell.innerText.trim().replace(/\n/g, ' '));
+                        }
+                        text += rowData.join('\t') + '\n';
+                    }
+                    navigator.clipboard.writeText(text).then(() => {
+                        alert('Table successfully copied to clipboard! You can paste it directly into Excel.');
+                    }).catch(err => {
+                        alert('Copy error: ' + err);
+                    });
+                },
+
+                get filteredPins() {
+                    const searchQueries = this.parseQueries(this.searchQuery);
+                    const signalQueries = this.parseQueries(this.signalFilter);
+
+                    return this.pins.filter(pin => {
+                        const matchesSearch = searchQueries.length === 0 || 
+                            searchQueries.some(q => 
+                                pin.name.toLowerCase().includes(q) || 
+                                pin.position.toLowerCase().includes(q)
+                            );
+                        
+                        const matchesSignal = signalQueries.length === 0 || 
+                            pin.signals.some(sig => {
+                                const lowerSig = sig.toLowerCase();
+                                return signalQueries.some(q => lowerSig.includes(q));
+                            });
+
+                        if (this.showAllPinsEvenWithoutMatch && signalQueries.length > 0) {
+                            return matchesSearch;
+                        }
+
+                        return matchesSearch && matchesSignal;
+                    });
+                }
+            }
+        }
+    </script>
+</body>
+</html>
